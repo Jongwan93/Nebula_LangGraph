@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -17,7 +17,12 @@ from tenacity import (
 )
 
 from state import AgentState
-from tools import append_results_to_sheet, fetch_stock_data, search_news_and_macro
+from tools import (
+    append_results_to_sheet,
+    fetch_stock_data,
+    search_news_and_macro,
+    write_results_to_new_sheet,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,9 +106,12 @@ def _fetch_one_ticker_sync(ticker: str) -> dict[str, Any]:
         news_macro = search_news_and_macro(ticker, include_macro=True)
         gathered["news"] = news_macro.get("news", [])
         gathered["macro"] = news_macro.get("macro", [])
+        if not gathered["news"] and not gathered["macro"]:
+            logger.warning(f"No news/macro data retrieved for {ticker}")
     except Exception as e:
+        logger.exception(f"Failed to fetch news/macro for {ticker}: {e}")
         gathered["news"] = [f"Error: {e}"]
-        gathered["macro"] = []
+        gathered["macro"] = [f"Error: {e}"]
     return gathered
 
 
@@ -304,16 +312,20 @@ async def analyst_node(state: AgentState) -> dict[str, Any]:
         return {"analysis_results": []}
 
     # Check for API key before creating LLM
-    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("DEEPSEEK_API_KEY")
     if not api_key:
         raise ValueError(
-            "GOOGLE_API_KEY or GEMINI_API_KEY not set in environment. "
-            "Set it in your .env file or export it as an environment variable."
+            "DEEPSEEK_API_KEY not set in environment. "
+            "Set it in your .env file or export it as an environment variable. "
+            "Get your API key from https://platform.deepseek.com/"
         )
 
-    # Try gemini-1.5-flash as it's more stable; if you need gemini-3, use "gemini-2.0-flash-exp"
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-flash", temperature=0, api_key=api_key
+    # Deepseek uses OpenAI-compatible API with custom base_url
+    llm = ChatOpenAI(
+        model="deepseek-reasoner",
+        temperature=0,
+        api_key=api_key,
+        base_url="https://api.deepseek.com",
     )
     prompt = ChatPromptTemplate.from_messages(
         [
@@ -343,6 +355,7 @@ async def analyst_node(state: AgentState) -> dict[str, Any]:
                     ),
                 )
                 reason = result.get("reason", "")
+                # Show full error message if there's an error, otherwise truncate for success
                 if (
                     result.get("predicted_change_pct", 0) == 0.0
                     and "Analysis error" in reason
@@ -353,6 +366,7 @@ async def analyst_node(state: AgentState) -> dict[str, Any]:
                         flush=True,
                     )
                 else:
+                    # Truncate only for successful predictions
                     print(
                         f"  -> {result['ticker']}: {result['predicted_change_pct']}% | {reason[:60]}...",
                         flush=True,
@@ -400,6 +414,36 @@ def ranking_node(state: AgentState) -> dict[str, Any]:
         flush=True,
     )
     return {"ranked_results": ranked}
+
+
+def write_all_analysis_to_sheet_node(state: AgentState) -> dict[str, Any]:
+    """
+    Write ALL analysis results to a new Google Sheet (before ranking).
+    Creates a new sheet with timestamp name if sheet_name not provided in state.
+    """
+    from datetime import datetime
+
+    analysis_results = state.get("analysis_results") or []
+    if not analysis_results:
+        return {}
+
+    # Get sheet name from state or use timestamp
+    sheet_name = state.get("analysis_sheet_name")
+    if not sheet_name:
+        sheet_name = f"Stock Analysis {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+
+    try:
+        sheet_id = write_results_to_new_sheet(sheet_name, analysis_results)
+        print(f"  Created new Google Sheet with all analysis results: {sheet_name}")
+        print(f"  Sheet ID: {sheet_id}")
+        print(f"  Sheet URL: https://docs.google.com/spreadsheets/d/{sheet_id}")
+        return {}
+    except Exception as e:
+        print(
+            f"  Warning: Failed to create Google Sheet for analysis results: {e}",
+            flush=True,
+        )
+        return {}
 
 
 def sheets_writer_node(state: AgentState) -> dict[str, Any]:

@@ -60,4 +60,27 @@ htmlcov/
 .langchain/
 langsmith.json
 
+# Ruff
+.ruff_cache/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+
+# Project specific
 understandings.docx

@@ -1,7 +1,7 @@
 # LangGraph and LangChain
 langgraph>=0.2.0
 langchain>=0.3.0
-langchain-google-genai>=2.0.0
+langchain-openai>=1.0.0
 langchain-community>=0.3.0
 
 # Data sources
@@ -19,3 +19,6 @@ google-auth-httplib2>=0.2.0
 # Environment and utilities
 python-dotenv>=1.0.0
 tenacity>=8.0.0
+
+# Linting and formatting
+ruff>=0.1.0

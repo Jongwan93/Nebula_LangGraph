@@ -7,8 +7,8 @@ from typing import Any
 
 import yfinance as yf
 from dotenv import load_dotenv
-from langchain_tavily import TavilySearch
 from langchain_core.tools import tool
+from langchain_tavily import TavilySearch
 
 load_dotenv()
 
@@ -81,25 +81,65 @@ def search_news_and_macro(ticker: str, include_macro: bool = True) -> dict[str, 
     Use Tavily to fetch recent news for the ticker and optional macro/economic context.
     Returns structured dict with 'news' and optionally 'macro' snippets.
     """
-    tavily = get_tavily_tool(max_results=5)
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    # Check if API key is set
+    if not os.getenv("TAVILY_API_KEY"):
+        error_msg = "TAVILY_API_KEY not set in environment"
+        logger.error(error_msg)
+        return {"news": [f"Error: {error_msg}"], "macro": [f"Error: {error_msg}"]}
+
+    try:
+        tavily = get_tavily_tool(max_results=5)
+    except Exception as e:
+        error_msg = f"Failed to initialize Tavily tool: {e}"
+        logger.error(error_msg)
+        return {"news": [f"Error: {error_msg}"], "macro": [f"Error: {error_msg}"]}
+
     out: dict[str, Any] = {"news": [], "macro": []}
 
     # Stock-specific news
     try:
-        news_result = tavily.invoke(
-            {"query": f"latest news {ticker} stock earnings revenue"}
+        news_result = tavily.invoke({"query": f"latest news {ticker} stock earnings revenue"})
+        logger.info(
+            f"Tavily news result for {ticker}: type={type(news_result)}, value={str(news_result)[:500]}"
         )
+
+        # Handle different response formats
         if isinstance(news_result, list):
-            out["news"] = [r.get("content", str(r)) for r in news_result[:5]]
+            out["news"] = [r.get("content", str(r)) for r in news_result[:5] if r]
         elif isinstance(news_result, dict):
-            if "results" in news_result:
+            # Check for error first
+            if "error" in news_result:
+                error = news_result["error"]
+                error_msg = str(error) if isinstance(error, Exception) else str(error)
+                logger.error(f"Tavily API error for {ticker}: {error_msg}")
+                out["news"] = [f"Tavily API error: {error_msg}"]
+            # Check for results array
+            elif "results" in news_result and isinstance(news_result["results"], list):
                 out["news"] = [
                     r.get("content", r.get("raw_content", str(r)))
                     for r in news_result["results"][:5]
+                    if r
                 ]
-            if "answer" in news_result and news_result["answer"]:
-                out["news"].insert(0, news_result["answer"])
+                # Check for answer field
+                if "answer" in news_result and news_result["answer"]:
+                    out["news"].insert(0, news_result["answer"])
+            # Check if it's a direct content field
+            elif "content" in news_result:
+                out["news"] = [news_result["content"]]
+        elif isinstance(news_result, str):
+            # Sometimes Tavily returns a string directly
+            out["news"] = [news_result]
+
+        if not out["news"]:
+            logger.warning(
+                f"No news results returned from Tavily for {ticker}. Raw result: {news_result}"
+            )
     except Exception as e:
+        logger.exception(f"Tavily news search error for {ticker}: {e}")
         out["news"] = [f"Tavily error: {e}"]
 
     if include_macro:
@@ -107,14 +147,37 @@ def search_news_and_macro(ticker: str, include_macro: bool = True) -> dict[str, 
             macro_result = tavily.invoke(
                 {"query": "US economic macro data inflation Fed interest rates latest"}
             )
+            logger.info(
+                f"Tavily macro result: type={type(macro_result)}, value={str(macro_result)[:500]}"
+            )
+
+            # Handle different response formats
             if isinstance(macro_result, list):
-                out["macro"] = [r.get("content", str(r)) for r in macro_result[:3]]
-            elif isinstance(macro_result, dict) and "results" in macro_result:
-                out["macro"] = [
-                    r.get("content", r.get("raw_content", str(r)))
-                    for r in macro_result["results"][:3]
-                ]
+                out["macro"] = [r.get("content", str(r)) for r in macro_result[:3] if r]
+            elif isinstance(macro_result, dict):
+                # Check for error first
+                if "error" in macro_result:
+                    error = macro_result["error"]
+                    error_msg = str(error) if isinstance(error, Exception) else str(error)
+                    logger.error(f"Tavily API error for macro: {error_msg}")
+                    out["macro"] = [f"Tavily API error: {error_msg}"]
+                elif "results" in macro_result and isinstance(macro_result["results"], list):
+                    out["macro"] = [
+                        r.get("content", r.get("raw_content", str(r)))
+                        for r in macro_result["results"][:3]
+                        if r
+                    ]
+                    if "answer" in macro_result and macro_result["answer"]:
+                        out["macro"].insert(0, macro_result["answer"])
+                elif "content" in macro_result:
+                    out["macro"] = [macro_result["content"]]
+            elif isinstance(macro_result, str):
+                out["macro"] = [macro_result]
+
+            if not out["macro"]:
+                logger.warning(f"No macro results returned from Tavily. Raw result: {macro_result}")
         except Exception as e:
+            logger.exception(f"Tavily macro search error: {e}")
             out["macro"] = [f"Macro search error: {e}"]
 
     return out
@@ -130,9 +193,7 @@ def get_sheets_client():
     import gspread
     from google.oauth2.service_account import Credentials
 
-    path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "service_account.json"
-    )
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "service_account.json")
     if not os.path.isfile(path):
         raise FileNotFoundError(
             "service_account.json not found in project root. "
@@ -144,6 +205,44 @@ def get_sheets_client():
     ]
     creds = Credentials.from_service_account_file(path, scopes=scopes)
     return gspread.authorize(creds)
+
+
+def write_results_to_new_sheet(
+    sheet_name: str,
+    rows: list[dict[str, Any]],
+    columns: list[str] | None = None,
+) -> str:
+    """
+    Create a new Google Sheet and write analysis results to it.
+    Returns the sheet ID of the created sheet.
+    """
+    if columns is None:
+        columns = ["date", "stock ticker", "% change in stock price", "reason"]
+    client = get_sheets_client()
+
+    # Create a new spreadsheet
+    sheet = client.create(sheet_name)
+    worksheet = sheet.sheet1
+
+    # Write header row
+    worksheet.update("A1:D1", [columns])
+
+    # Write all data rows
+    row_data = []
+    for r in rows:
+        row_data.append(
+            [
+                r.get("date", ""),
+                r.get("ticker", r.get("stock ticker", "")),
+                r.get("predicted_change_pct", r.get("% change in stock price", "")),
+                r.get("reason", ""),
+            ]
+        )
+
+    if row_data:
+        worksheet.update(f"A2:D{len(row_data) + 1}", row_data)
+
+    return sheet.id
 
 
 def append_results_to_sheet(

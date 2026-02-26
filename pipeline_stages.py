@@ -5,21 +5,22 @@ import asyncio
 from typing import Any
 
 from nodes import (
-    gather_data_node,
-    select_ticker_node,
     analyst_node,
+    gather_data_node,
     ranking_node,
+    select_ticker_node,
     sheets_writer_node,
 )
 from state import AgentState
 from state_io import (
-    load_gathered_data,
     load_analysis_results,
+    load_gathered_data,
     load_ranked_results,
-    save_gathered_data,
     save_analysis_results,
+    save_gathered_data,
     save_ranked_results,
 )
+from tools import write_results_to_new_sheet
 
 
 def run_stage_gather(tickers: list[str]) -> dict[str, Any]:
@@ -43,9 +44,12 @@ def run_stage_gather(tickers: list[str]) -> dict[str, Any]:
     return state
 
 
-def run_stage_analyze() -> list[dict[str, Any]]:
+def run_stage_analyze(
+    create_new_sheet: bool = False, sheet_name: str | None = None
+) -> list[dict[str, Any]]:
     """
     Stage 2: Load gathered_data.json, run analyst_node once for all tickers, save analysis_results.json.
+    If create_new_sheet is True, writes all analysis results to a new Google Sheet.
     Returns analysis_results list.
     """
     gathered_data = load_gathered_data()
@@ -63,6 +67,23 @@ def run_stage_analyze() -> list[dict[str, Any]]:
     analysis_results = update.get("analysis_results") or []
     out_path = save_analysis_results(analysis_results)
     print(f"  Saved analysis_results to {out_path}", flush=True)
+
+    # Write to new sheet if requested
+    if create_new_sheet and analysis_results:
+        if sheet_name is None:
+            from datetime import datetime
+
+            sheet_name = (
+                f"Stock Analysis {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+        try:
+            sheet_id = write_results_to_new_sheet(sheet_name, analysis_results)
+            print(f"  Created new Google Sheet: {sheet_name}")
+            print(f"  Sheet ID: {sheet_id}")
+            print(f"  Sheet URL: https://docs.google.com/spreadsheets/d/{sheet_id}")
+        except Exception as e:
+            print(f"  Warning: Failed to create Google Sheet: {e}", flush=True)
+
     return analysis_results
 
 

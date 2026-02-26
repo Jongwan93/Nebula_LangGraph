@@ -5,7 +5,7 @@ A LangGraph-based pipeline that predicts **1-week stock price changes** using hi
 ## Features
 
 - **Data gathering:** yfinance (30+ days price data) + Tavily (news and economic macro)
-- **LLM analysis:** Google Gemini predicts % price change and a short reason per ticker
+- **LLM analysis:** Deepseek (deepseek-reasoner) predicts % price change and a short reason per ticker
 - **Ranking:** Keeps only positive predictions, sorts by predicted gain, takes top 5
 - **Output:** Console summary + optional Google Sheets export (date, ticker, % change, reason)
 - **Flow:** One ticker at a time with explicit state and conditional routing (good for debugging and scaling)
@@ -15,7 +15,7 @@ A LangGraph-based pipeline that predicts **1-week stock price changes** using hi
 | Layer          | Technology                                      |
 |----------------|--------------------------------------------------|
 | Orchestration  | **LangGraph** (state graph, nodes, conditional edges) |
-| LLM & prompts  | **LangChain** + **langchain-google-genai** (Gemini)  |
+| LLM & prompts  | **LangChain** + **langchain-openai** (Deepseek)  |
 | Price data    | **yfinance**                                    |
 | News / macro   | **Tavily** (langchain-tavily)                    |
 | Output        | **gspread** (Google Sheets, service account)     |
@@ -46,7 +46,7 @@ Nebula_Langraph/
 
    Copy `.env.example` to `.env` and set:
 
-   - `GOOGLE_API_KEY` — Google AI Studio API key for Gemini
+   - `DEEPSEEK_API_KEY` — Deepseek API key (get from https://platform.deepseek.com/)
    - `TAVILY_API_KEY` — Tavily API key for search
    - `GOOGLE_SHEET_ID` — (optional) Google Sheet ID for writing results
 
@@ -86,7 +86,7 @@ Done.
 
 1. **select_ticker** — Pops the next ticker from the list; when empty, routes to **ranking** instead of **gather_data**.
 2. **gather_data** — Fetches price (yfinance) and news/macro (Tavily) for the current ticker only.
-3. **analyst** — Builds a prompt with price summary and news, calls Gemini, parses JSON (`predicted_change_pct`, `reason`), appends one result to state.
+3. **analyst** — Builds a prompt with price summary and news, calls Deepseek, parses JSON (`predicted_change_pct`, `reason`), appends one result to state.
 4. **ranking** — Filters to positive `predicted_change_pct`, sorts descending, takes top 5.
 5. **sheets_writer** — Appends the ranked list to the Google Sheet (if `GOOGLE_SHEET_ID` is set).
 

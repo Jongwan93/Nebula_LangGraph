@@ -17,3 +17,5 @@ class AgentState(TypedDict, total=False):
     ranked_results: list[dict[str, Any]]
     # Google Sheet ID or title for output (optional)
     sheet_id: str
+    # Optional name for the analysis results sheet (created after analysis stage)
+    analysis_sheet_name: str

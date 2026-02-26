@@ -5,33 +5,36 @@ import asyncio
 
 from langgraph.graph import END, StateGraph
 
-from state import AgentState
 from nodes import (
-    select_ticker_node,
-    gather_data_node,
     analyst_node,
+    gather_data_node,
     ranking_node,
+    select_ticker_node,
     sheets_writer_node,
+    write_all_analysis_to_sheet_node,
 )
+from state import AgentState
 
 
 def build_graph():
     """
     Build the compiled LangGraph pipeline.
-    Linear path: select_ticker -> gather_data -> analyst -> ranking -> sheets_writer -> END.
+    Linear path: select_ticker -> gather_data -> analyst -> write_all_analysis -> ranking -> sheets_writer -> END.
     """
     workflow = StateGraph(AgentState)
 
     workflow.add_node("select_ticker", select_ticker_node)
     workflow.add_node("gather_data", gather_data_node)
     workflow.add_node("analyst", analyst_node)
+    workflow.add_node("write_all_analysis", write_all_analysis_to_sheet_node)
     workflow.add_node("ranking", ranking_node)
     workflow.add_node("sheets_writer", sheets_writer_node)
 
     workflow.set_entry_point("select_ticker")
     workflow.add_edge("select_ticker", "gather_data")
     workflow.add_edge("gather_data", "analyst")
-    workflow.add_edge("analyst", "ranking")
+    workflow.add_edge("analyst", "write_all_analysis")
+    workflow.add_edge("write_all_analysis", "ranking")
     workflow.add_edge("ranking", "sheets_writer")
     workflow.add_edge("sheets_writer", END)
 
